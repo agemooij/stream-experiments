@@ -39,11 +39,14 @@ object LoadBalancedClientApp extends App {
 
   private def sendRequests(nrOfRequests: Int, servers: Seq[Server]): Future[Done] =
     requests(nrOfRequests)
-      .via(loadBalancedFlow(servers))
+      .via(loadBalancedHttpClientFlow(servers))
       .runForeach {
-        case (response, id) ⇒ {
-          val responseAsString = Await.result(Unmarshal(response.get.entity).to[String], 1.second)
+        case (Success(response), id) ⇒ {
+          val responseAsString = Await.result(Unmarshal(response.entity).to[String], 1.second)
           println(s"${id}: Response = ${responseAsString}")
+        }
+        case (Failure(cause), id) ⇒ {
+          println(s"${id}: Failed = ${cause}")
         }
       }
 
@@ -55,7 +58,7 @@ object LoadBalancedClientApp extends App {
     Source(reqs)
   }
 
-  private def loadBalancedFlow(servers: Seq[Server]): Flow[(HttpRequest, Int), (Try[HttpResponse], Int), NotUsed] = {
+  private def loadBalancedHttpClientFlow(servers: Seq[Server]): Flow[(HttpRequest, Int), (Try[HttpResponse], Int), NotUsed] = {
     val workers = servers.map { server ⇒
       Flow[(HttpRequest, Int)]
         .map {
