@@ -33,12 +33,7 @@ class HttpClientExt(private val config: Config)(implicit val system: ActorSystem
   )(implicit fm: Materializer): Flow[(HttpRequest, T), (Try[HttpResponse], T), NotUsed] = {
     val workers = servers.map { server ⇒
       Flow[(HttpRequest, T)]
-        .map {
-          case in @ (_, id) ⇒ {
-            println(s"${id}: Sending request to ${server.host}:${server.port}")
-            in
-          }
-        }
+        .log("load-balancer", out ⇒ s"${out._2}: Sending request to ${server.host}:${server.port}")(log)
         .via(
           Http().cachedHostConnectionPool[T](
             host = server.host,
