@@ -1,19 +1,15 @@
 package scalapenos.experiments.streams
 
-import java.io.File
-
 import scala.concurrent.duration._
 import scala.concurrent._
 import scala.util._
 
 import akka._
-import akka.actor.ActorSystem
+import akka.actor._
 
 import akka.http.scaladsl._
 import akka.http.scaladsl.model._
 import akka.http.scaladsl.unmarshalling._
-
-import Uri._
 
 import akka.stream._
 import akka.stream.scaladsl._
@@ -35,11 +31,11 @@ object LoadBalancedClientApp extends App {
 
   println(s"Done.")
 
-  case class Server(host: String, port: Int)
-
   private def sendRequests(nrOfRequests: Int, servers: Seq[Server]): Future[Done] =
     requests(nrOfRequests)
-      .via(loadBalancedHttpClientFlow(servers))
+      .via(
+        HttpClient().loadBalancedHostConnectionPool(servers)
+      )
       .runForeach {
         case (Success(response), id) ⇒ {
           val responseAsString = Await.result(Unmarshal(response.entity).to[String], 1.second)
@@ -57,35 +53,4 @@ object LoadBalancedClientApp extends App {
 
     Source(reqs)
   }
-
-  private def loadBalancedHttpClientFlow(servers: Seq[Server]): Flow[(HttpRequest, Int), (Try[HttpResponse], Int), NotUsed] = {
-    val workers = servers.map { server ⇒
-      Flow[(HttpRequest, Int)]
-        .map {
-          case in @ (request, id) ⇒ {
-            println(s"${id}: Sending request to ${server.host}:${server.port}")
-            in
-          }
-        }
-        .via(Http().cachedHostConnectionPool[Int](host = server.host, port = server.port).mapMaterializedValue(_ ⇒ NotUsed))
-    }
-
-    balancer(workers)
-  }
-
-  private def balancer[In, Out](workers: Seq[Flow[In, Out, Any]]): Flow[In, Out, NotUsed] = {
-    import GraphDSL.Implicits._
-
-    Flow.fromGraph(GraphDSL.create() { implicit b ⇒
-      val balancer = b.add(Balance[In](workers.size, waitForAllDownstreams = true))
-      val merge = b.add(Merge[Out](workers.size))
-
-      workers.foreach { worker ⇒
-        balancer ~> worker ~> merge
-      }
-
-      FlowShape(balancer.in, merge.out)
-    })
-  }
-
 }

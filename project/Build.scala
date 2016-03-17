@@ -24,7 +24,10 @@ object Build extends AutoPlugin {
       "-deprecation",
       "-language:_",
       "-target:jvm-1.8",
-      "-encoding", "UTF-8"
+      "-encoding", "UTF-8",
+      "-Xlog-reflective-calls",
+      "-Ywarn-unused",
+      "-Ywarn-unused-import"
     ),
 
     preferences in Compile := formattingPreferences,
