@@ -6,6 +6,7 @@ import scala.concurrent.duration._
 import scala.concurrent._
 import scala.util._
 
+import akka._
 import akka.actor.ActorSystem
 
 import akka.http.scaladsl._
@@ -20,25 +21,26 @@ object LoadBalancedClientApp extends App {
   implicit val materializer = ActorMaterializer()
   implicit val dispatcher = system.dispatcher
 
-  val NoLimit = Long.MaxValue
-
-  def poolClientFlow(port: Int) = Http().cachedHostConnectionPool[Int](host = "localhost", port = port)
-
-  def responseFuture(port: Int): Future[(Try[HttpResponse], Int)] =
-    Source.single(HttpRequest(uri = "/twitter") → 42)
-      .via(poolClientFlow(port))
-      .runWith(Sink.head)
-
-  val bytesWritten = responseFuture(5000) flatMap { r ⇒
-    val (response, _) = r
-    Unmarshal(response.get.entity).to[String]
-  }
-
-  val result = Await.result(bytesWritten, atMost = 1.minute)
-
-  println(s"Done.")
-  println(s"Result: $result")
-
+  Await.result(responseStreamFuture(5000), 1.minute)
   Await.ready(Http().shutdownAllConnectionPools(), 1.second)
   Await.result(system.terminate(), 1.seconds)
+
+  println(s"Done.")
+
+  private def responseStreamFuture(port: Int): Future[Done] =
+    requests()
+      .via(poolClientFlow(port))
+      .runForeach {
+        case (response, id) ⇒ {
+          val responseAsString = Await.result(Unmarshal(response.get.entity).to[String], 1.second)
+          println(s"${id}: ${responseAsString}")
+        }
+      }
+
+  private def requests(): Source[(HttpRequest, Int), NotUsed] = {
+    Source.single(HttpRequest(uri = "/twitter") → 42)
+  }
+
+  private def poolClientFlow(port: Int): Flow[(HttpRequest, Int), (Try[HttpResponse], Int), Http.HostConnectionPool] =
+    Http().cachedHostConnectionPool[Int](host = "localhost", port = port)
 }
