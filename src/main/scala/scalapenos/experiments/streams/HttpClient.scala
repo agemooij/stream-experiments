@@ -44,7 +44,7 @@ class HttpClientExt(private val config: Config)(implicit val system: ActorSystem
         )
     }
 
-    balancer(workers)
+    balancer[(HttpRequest, T), (Try[HttpResponse], T)](workers)
   }
 
   private def balancer[In, Out](workers: Seq[Flow[In, Out, Any]]): Flow[In, Out, NotUsed] = {

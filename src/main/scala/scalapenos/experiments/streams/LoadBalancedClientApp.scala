@@ -39,10 +39,10 @@ object LoadBalancedClientApp extends App {
       .runForeach {
         case (Success(response), id) ⇒ {
           val responseAsString = Await.result(Unmarshal(response.entity).to[String], 1.second)
-          println(s"${id}: Response = ${responseAsString}")
+          println(s"(${id}) Response: ${responseAsString}")
         }
         case (Failure(cause), id) ⇒ {
-          println(s"${id}: Failed = ${cause}")
+          println(s"(${id}) Failed: ${cause}")
         }
       }
 
