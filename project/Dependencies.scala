@@ -7,8 +7,11 @@ object Version {
 }
 
 object Library {
-  val akkaHttp          = "com.typesafe.akka"   %% "akka-http-experimental"   % Version.Akka
-  val akkaHttpTestkit   = "com.typesafe.akka"   %% "akka-http-testkit"        % Version.Akka
-  val akkaTestkit       = "com.typesafe.akka"   %% "akka-testkit"             % Version.Akka
-  val scalaTest         = "org.scalatest"       %% "scalatest"                % Version.ScalaTest
+  val akkaHttp         = "com.typesafe.akka"  %%  "akka-http-experimental"  %  Version.Akka
+  val akkaSlf4j        = "com.typesafe.akka"  %% "akka-slf4j"               %  Version.Akka
+  val akkaHttpTestkit  = "com.typesafe.akka"  %%  "akka-http-testkit"       %  Version.Akka
+  val akkaTestkit      = "com.typesafe.akka"  %%  "akka-testkit"            %  Version.Akka
+  val scalaTest        = "org.scalatest"      %%  "scalatest"               %  Version.ScalaTest
+
+  val logback          = "ch.qos.logback"      %  "logback-classic"         % "1.1.6"
 }

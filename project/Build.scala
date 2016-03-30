@@ -8,7 +8,26 @@ import scalariform.formatter.preferences._
 import scoverage.ScoverageSbtPlugin
 import spray.revolver.RevolverPlugin
 
-object Build extends AutoPlugin {
+object Build extends Build {
+  lazy val streamExperiments = Project("stream-experiments", file("."))
+    .enablePlugins(BuildPlugin)
+    .settings(
+      name := "stream-experiments",
+
+      libraryDependencies ++= Vector(
+        Library.akkaHttp,
+        Library.akkaSlf4j,
+        Library.logback,
+        Library.akkaHttpTestkit  % "test",
+        Library.akkaTestkit      % "test",
+        Library.scalaTest        % "test"
+      )
+    )
+
+}
+
+
+object BuildPlugin extends AutoPlugin {
   override def requires = JvmPlugin && SbtScalariform && ScoverageSbtPlugin && RevolverPlugin
   override def trigger = allRequirements
   override def projectSettings = SbtScalariform.scalariformSettings ++ basicSettings
