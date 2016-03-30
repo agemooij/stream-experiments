@@ -21,7 +21,7 @@ case class Server(host: String, port: Int)
 /**
  *
  */
-class HttpClientExt(private val config: Config)(implicit val system: ActorSystem) extends Extension {
+class LoadBalancingHttpClientExt(private val config: Config)(implicit val system: ActorSystem) extends Extension {
 
   /**
    *
@@ -63,10 +63,10 @@ class HttpClientExt(private val config: Config)(implicit val system: ActorSystem
   }
 }
 
-object HttpClient extends ExtensionId[HttpClientExt] with ExtensionIdProvider {
-  def lookup() = HttpClient
-  def apply()(implicit system: ActorSystem): HttpClientExt = super.apply(system)
-  def createExtension(system: ExtendedActorSystem): HttpClientExt =
-    new HttpClientExt(system.settings.config getConfig "akka.http")(system)
+object LoadBalancingHttpClient extends ExtensionId[LoadBalancingHttpClientExt] with ExtensionIdProvider {
+  def lookup() = LoadBalancingHttpClient
+  def apply()(implicit system: ActorSystem): LoadBalancingHttpClientExt = super.apply(system)
+  def createExtension(system: ExtendedActorSystem): LoadBalancingHttpClientExt =
+    new LoadBalancingHttpClientExt(system.settings.config getConfig "akka.http")(system)
 
 }

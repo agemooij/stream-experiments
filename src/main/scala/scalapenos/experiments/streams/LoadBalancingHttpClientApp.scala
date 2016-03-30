@@ -14,7 +14,7 @@ import akka.http.scaladsl.unmarshalling._
 import akka.stream._
 import akka.stream.scaladsl._
 
-object LoadBalancedClientApp extends App {
+object LoadBalancingHttpClientApp extends App {
   implicit val system = ActorSystem()
   implicit val materializer = ActorMaterializer()
   implicit val dispatcher = system.dispatcher
@@ -34,7 +34,7 @@ object LoadBalancedClientApp extends App {
   private def sendRequests(nrOfRequests: Int, servers: Seq[Server]): Future[Done] =
     requests(nrOfRequests)
       .via(
-        HttpClient().loadBalancedHostConnectionPool(servers)
+        LoadBalancingHttpClient().loadBalancedHostConnectionPool(servers)
       )
       .runForeach {
         case (Success(response), id) ⇒ {

@@ -1,7 +1,6 @@
 package scalapenos.experiments.streams
 
 import scala.concurrent.duration._
-// import scala.concurrent._
 import scala.util._
 
 import akka._
@@ -10,7 +9,6 @@ import akka.actor._
 import akka.http.scaladsl._
 import akka.http.scaladsl.model._
 import akka.http.scaladsl.settings._
-// import akka.http.scaladsl.unmarshalling._
 
 import akka.stream._
 import akka.stream.scaladsl._
@@ -20,14 +18,14 @@ object LongPollingClientApp extends App {
   implicit val materializer = ActorMaterializer()
   implicit val dispatcher = system.dispatcher
 
-  import AkkaHttpLongPolling._
+  import LongPollingHttpClientUsingHostConnectionPool._
 
   val source = longPollingSource("consul.nl.wehkamp.prod.blaze.ps", 8500, Uri("/v1/catalog/services"), 10.seconds)
 
   source.runForeach(println)
 }
 
-object AkkaHttpLongPolling {
+object LongPollingHttpClientUsingHostConnectionPool {
   def longPollingSource(host: String, port: Int, uri: Uri, maxWait: Duration)(implicit s: ActorSystem, fm: Materializer): Source[HttpResponse, NotUsed] = {
     import GraphDSL.Implicits._
     import s.dispatcher
