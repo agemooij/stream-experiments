@@ -1,12 +1,7 @@
 
+## Some experiments with akka-stream and akka-http
 
+This repository contains the following experiments:
 
-### long polling connections stream
-
-connection recoverWith (_ => connection)
-
-
-### sending the next request
-
-source unfold?
-flow.fold?
+- a very basic load balancing http client
+- a very basic long polling http client
