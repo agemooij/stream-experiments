@@ -13,14 +13,14 @@ import akka.http.scaladsl.settings._
 import akka.stream._
 import akka.stream.scaladsl._
 
-object LongPollingClientApp extends App {
+object LongPollingHttpClientUsingHostConnectionPoolApp extends App {
   implicit val system = ActorSystem()
   implicit val materializer = ActorMaterializer()
   implicit val dispatcher = system.dispatcher
 
   import LongPollingHttpClientUsingHostConnectionPool._
 
-  val source = longPollingSource("consul.nl.wehkamp.prod.blaze.ps", 8500, Uri("/v1/catalog/services"), 10.seconds)
+  val source = longPollingSource("consul.nl.wehkamp.prod.blaze.ps", 8500, Uri("/v1/catalog/services"), 5.seconds)
 
   source.runForeach(println)
 }
