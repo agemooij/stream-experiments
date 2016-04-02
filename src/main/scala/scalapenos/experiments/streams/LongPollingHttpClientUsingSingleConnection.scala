@@ -22,7 +22,7 @@ object LongPollingHttpClientUsingSingleConnectionApp extends App {
 
   val source = longPollingSource("consul.nl.wehkamp.prod.blaze.ps", 8500, Uri("/v1/catalog/services"), 5.seconds)
 
-  source.runForeach(r ⇒ println(r.copy(entity = HttpEntity.Empty)))
+  source.runForeach(r ⇒ println(r.copy(entity = HttpEntity.Empty))) // less noisy while experimenting...
 }
 
 object LongPollingHttpClientUsingSingleConnection {
