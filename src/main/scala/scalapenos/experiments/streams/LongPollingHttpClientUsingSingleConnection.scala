@@ -31,18 +31,20 @@ object LongPollingHttpClientUsingSingleConnection {
       import GraphDSL.Implicits._
       import s.dispatcher
 
+      // TODO: use the correct client connection settings
+
       val initSource: Source[HttpRequest, NotUsed] = Source.single(createRequest(uri, maxWait, None))
       val httpFlow: Flow[HttpRequest, HttpResponse, NotUsed] =
         Flow[HttpRequest]
           .flatMapConcat(request ⇒ Source.single(request).via(Http().outgoingConnection(host, port)))
           .mapMaterializedValue(_ ⇒ NotUsed)
 
-      val outboundResponse: Flow[HttpResponse, HttpResponse, NotUsed] =
-        Flow[HttpResponse]
+      val outboundResponsesFlow: Flow[HttpResponse, HttpResponse, NotUsed] =
+        Flow[HttpResponse]                        // TODO: add size limit
           .mapAsync(1)(response ⇒ response.entity.toStrict(5.seconds).map(strictEntity ⇒ response.copy(entity = strictEntity)))
-          .withAttributes(ActorAttributes.supervisionStrategy(Supervision.resumingDecider))
+          .withAttributes(ActorAttributes.supervisionStrategy(Supervision.resumingDecider)) // TODO: turn into log-and-resume
 
-      val feedbackResponse: Flow[HttpResponse, HttpRequest, NotUsed] =
+      val feedbackResponsesFlow: Flow[HttpResponse, HttpRequest, NotUsed] =
         Flow[HttpResponse]
           .map { response ⇒
             val index = response.headers.find(_.is("x-consul-index")).map(_.value.toLong)
@@ -54,8 +56,8 @@ object LongPollingHttpClientUsingSingleConnection {
       val http = b.add(httpFlow)
       val merge = b.add(Merge[HttpRequest](2))
       val broadcast = b.add(Broadcast[HttpResponse](2))
-      val outbound = b.add(outboundResponse)
-      val feedback = b.add(feedbackResponse)
+      val outbound = b.add(outboundResponsesFlow)
+      val feedback = b.add(feedbackResponsesFlow)
 
       // format: OFF
       init ~> merge ~> http     ~> broadcast ~> outbound
