@@ -2,7 +2,7 @@
 <configuration scan="true" scanPeriod="2 seconds">
   <statusListener class="ch.qos.logback.core.status.OnConsoleStatusListener" />
 
-  <logger name="akka" level="${LOGLEVEL_AKKA:-INFO}" />
+  <logger name="akka" level="${LOGLEVEL_AKKA:-DEBUG}" />
   <logger name="scalapenos" level="${LOGLEVEL_APP:-DEBUG}" />
 
   <root level="${LOGLEVEL_ROOT:-INFO}">
