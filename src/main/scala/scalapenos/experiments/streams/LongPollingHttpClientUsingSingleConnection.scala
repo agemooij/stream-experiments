@@ -1,7 +1,6 @@
 package scalapenos.experiments.streams
 
 import scala.concurrent.duration._
-import scala.util._
 
 import akka._
 import akka.actor._
