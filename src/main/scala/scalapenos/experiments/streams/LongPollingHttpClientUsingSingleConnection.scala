@@ -22,33 +22,41 @@ object LongPollingHttpClientUsingSingleConnectionApp extends App {
 
   val source = longPollingSource("consul.nl.wehkamp.prod.blaze.ps", 8500, Uri("/v1/catalog/services"), 5.seconds)
 
-  source.runForeach(r ⇒ println(r.copy(entity = HttpEntity.Empty))) // less noisy while experimenting...
+  // source.runForeach(r ⇒ system.log.debug(r.copy(entity = HttpEntity.Empty).toString)) // less noisy while experimenting...
+  source.runWith(Sink.ignore)
 }
 
 object LongPollingHttpClientUsingSingleConnection {
   def longPollingSource(host: String, port: Int, uri: Uri, maxWait: Duration)(implicit s: ActorSystem, fm: Materializer): Source[HttpResponse, NotUsed] = {
     Source.fromGraph(GraphDSL.create() { implicit b ⇒
       import GraphDSL.Implicits._
-      import s.dispatcher
+      import s._
 
-      // TODO: use the correct client connection settings
+      val settings = ClientConnectionSettings(s).withIdleTimeout(maxWait * 1.2)
 
-      val initSource: Source[HttpRequest, NotUsed] = Source.single(createRequest(uri, maxWait, None))
+      val initSource: Source[HttpRequest, NotUsed] = Source.single(createRequest(uri, maxWait, None)).log("outer 0", out ⇒ s"Sending request...")
       val httpFlow: Flow[HttpRequest, HttpResponse, NotUsed] =
         Flow[HttpRequest]
-          .flatMapConcat(request ⇒ Source.single(request).via(Http().outgoingConnection(host, port)))
+          .log("outer 1", out ⇒ s"Sending request...")
+          .flatMapConcat(request ⇒
+            Source.single(request)
+              .log("inner 1", out ⇒ s"Sending request to new connection...")
+              .via(Http().outgoingConnection(host, port, settings = settings).log("inner 2", out ⇒ s"Received response: ${out.status}"))
+          )
           .mapMaterializedValue(_ ⇒ NotUsed)
+          .log("outer 2", out ⇒ s"Received response: ${out.status}")
 
       val outboundResponsesFlow: Flow[HttpResponse, HttpResponse, NotUsed] =
-        Flow[HttpResponse]                        // TODO: add size limit
+        Flow[HttpResponse] // TODO: add size limit
           .mapAsync(1)(response ⇒ response.entity.toStrict(5.seconds).map(strictEntity ⇒ response.copy(entity = strictEntity)))
           .withAttributes(ActorAttributes.supervisionStrategy(Supervision.resumingDecider)) // TODO: turn into log-and-resume
 
       val feedbackResponsesFlow: Flow[HttpResponse, HttpRequest, NotUsed] =
         Flow[HttpResponse]
           .map { response ⇒
+            log.debug(s"Success. Response: ${response.copy(entity = HttpEntity.Empty)}.")
             val index = response.headers.find(_.is("x-consul-index")).map(_.value.toLong)
-            println(s"Success. New index = ${index}.")
+            log.debug(s"New index: ${index}.")
             createRequest(uri, maxWait, index)
           }
 
