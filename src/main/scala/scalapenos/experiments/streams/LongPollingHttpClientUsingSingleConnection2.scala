@@ -21,7 +21,13 @@ object LongPollingHttpClientUsingSingleConnection2App extends App {
   import Consul.Catalog.Services._
 
   val maxWait = 5 seconds
-  val source = LongPolling().longPollingSource("consul.nl.wehkamp.prod.blaze.ps", 8500, initialRequest(maxWait), nextRequest(maxWait))
+  val settings = ClientConnectionSettings(system).withIdleTimeout(maxWait * 1.2)
+
+  // format: OFF
+  val source = LongPolling().longPollingSource("consul.nl.wehkamp.prod.blaze.ps", 8500,
+                                               initialRequest(maxWait),
+                                               nextRequest(maxWait),
+                                               settings) // format: ON
 
   source.runWith(Sink.ignore)
 }
@@ -37,13 +43,12 @@ class LongPollingExt(system: ActorSystem) extends Extension {
   // format: OFF
   def longPollingSource(host: String, port: Int,
                         initialRequest: HttpRequest,
-                        nextRequest: HttpResponse ⇒ HttpRequest)
+                        nextRequest: HttpResponse ⇒ HttpRequest,
+                        connectionSettings: ClientConnectionSettings = ClientConnectionSettings(system))
                        (implicit m: Materializer): Source[HttpResponse, NotUsed] = { // format: ON
     Source.fromGraph(GraphDSL.create() { implicit b ⇒
       import GraphDSL.Implicits._
       import s._
-
-      val settings = ClientConnectionSettings(s) //.withIdleTimeout(maxWait * 1.2)
 
       val initSource: Source[HttpRequest, NotUsed] =
         Source.single(initialRequest).log("outer 0", out ⇒ s"Sending request...")
@@ -51,7 +56,7 @@ class LongPollingExt(system: ActorSystem) extends Extension {
       val httpFlow: Flow[HttpRequest, HttpResponse, NotUsed] =
         Flow[HttpRequest]
           .log("long-poller", out ⇒ s"Sending request: ${out.uri}")
-          .via(Http().outgoingConnection(host, port, settings = settings))
+          .via(Http().outgoingConnection(host, port, settings = connectionSettings))
           .mapMaterializedValue(_ ⇒ NotUsed)
           .log("long-poller", out ⇒ s"Received response: ${out.status}")
 
