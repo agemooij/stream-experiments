@@ -1,6 +1,7 @@
 package scalapenos.experiments.streams
 
 import scala.concurrent.duration._
+import scala.util._
 
 import akka._
 import akka.actor._
@@ -13,7 +14,7 @@ import akka.http.scaladsl.settings._
 import akka.stream._
 import akka.stream.scaladsl._
 
-object LongPollingHttpClientUsingSingleConnection2App extends App {
+object LongPollingHttpClient extends App {
   implicit val system = ActorSystem()
   implicit val materializer = ActorMaterializer()
   implicit val dispatcher = system.dispatcher
@@ -35,10 +36,13 @@ object LongPollingHttpClientUsingSingleConnection2App extends App {
 class LongPollingExt(system: ActorSystem) extends Extension {
   implicit val s = system
 
+  import Http._
+
   //
   //  returns:
   //    a Source[HttpResponse, LongPoller]
-  //    with the materialized LongPoller value to safely shutdown the long polling operation
+  //    with the materialized LongPoller value to safely shutdown the long
+  //    polling operation and any connections or pools/actors used internally
   //
   // format: OFF
   def longPollingSource(host: String, port: Int,
@@ -51,28 +55,32 @@ class LongPollingExt(system: ActorSystem) extends Extension {
       import s._
 
       val initSource: Source[HttpRequest, NotUsed] =
-        Source.single(initialRequest).log("outer 0", out ⇒ s"Sending request...")
+        Source.single(initialRequest)
 
-      val httpFlow: Flow[HttpRequest, HttpResponse, NotUsed] =
+      val httpFlow: Flow[HttpRequest, Try[HttpResponse], NotUsed] =
         Flow[HttpRequest]
           .log("long-poller", out ⇒ s"Sending request: ${out.uri}")
-          .via(Http().outgoingConnection(host, port, settings = connectionSettings))
-          .mapMaterializedValue(_ ⇒ NotUsed)
-          .log("long-poller", out ⇒ s"Received response: ${out.status}")
+          .via(singleConnectionCustomPool(host, port, connectionSettings))
+          .log("long-poller", out ⇒ s"""Received response: ${out.map(_.status.toString).getOrElse("ERROR")}""")
+          .mapMaterializedValue(_ ⇒ NotUsed) // TODO: use the materialized value to allow shutdown
 
-      val outboundResponsesFlow: Flow[HttpResponse, HttpResponse, NotUsed] =
-        Flow[HttpResponse] // TODO: add size limit
+      val outboundResponsesFlow: Flow[Try[HttpResponse], HttpResponse, NotUsed] =
+        Flow[Try[HttpResponse]] // TODO: add size limit
+          .collect { case Success(response) ⇒ response }
           .mapAsync(1)(response ⇒ response.entity.toStrict(5.seconds).map(strictEntity ⇒ response.copy(entity = strictEntity)))
           .withAttributes(ActorAttributes.supervisionStrategy(Supervision.resumingDecider)) // TODO: turn into log-and-resume
 
-      val feedbackResponsesFlow: Flow[HttpResponse, HttpRequest, NotUsed] =
-        Flow[HttpResponse]
-          .map(nextRequest(_))
+      val feedbackResponsesFlow: Flow[Try[HttpResponse], HttpRequest, NotUsed] =
+        Flow[Try[HttpResponse]]
+          .map {
+            case Success(response) ⇒ nextRequest(response)
+            case Failure(cause)    ⇒ initialRequest // TODO: log something
+          }
 
       val init = b.add(initSource)
       val http = b.add(httpFlow)
       val merge = b.add(Merge[HttpRequest](2))
-      val broadcast = b.add(Broadcast[HttpResponse](2))
+      val broadcast = b.add(Broadcast[Try[HttpResponse]](2))
       val outbound = b.add(outboundResponsesFlow)
       val feedback = b.add(feedbackResponsesFlow)
 
@@ -84,13 +92,27 @@ class LongPollingExt(system: ActorSystem) extends Extension {
       SourceShape(outbound.out)
     })
   }
+
+  private def singleConnectionCustomPool(host: String, port: Int, //format: OFF
+                                         connectionSettings: ClientConnectionSettings)
+                                        (implicit m: Materializer): Flow[HttpRequest, Try[HttpResponse], HostConnectionPool] = { // format: ON
+    val poolSettings = ConnectionPoolSettings(system)
+      .withMaxConnections(1)
+      .withPipeliningLimit(1)
+      .withMaxRetries(0)
+      .withConnectionSettings(connectionSettings)
+
+    Flow[HttpRequest]
+      .map(request ⇒ (request, 42))
+      .viaMat(Http().newHostConnectionPool(host, port, poolSettings))(Keep.right)
+      .map { case (responseTry, _) ⇒ responseTry }
+  }
 }
 
 object LongPolling extends ExtensionId[LongPollingExt] with ExtensionIdProvider {
   def lookup() = LongPolling
   def apply()(implicit system: ActorSystem): LongPollingExt = super.apply(system)
   def createExtension(system: ExtendedActorSystem) = new LongPollingExt(system)
-
 }
 
 object Consul {
