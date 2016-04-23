@@ -24,13 +24,16 @@ object LongPollingHttpClient extends App {
   val maxWait = 5 seconds
   val settings = ClientConnectionSettings(system).withIdleTimeout(maxWait * 1.2)
 
+  // The hostname below is a VPN-protected Consul server not reachable from the internet.
+  // Please use your own Consul server if you want to run this code or use a different long polling API.
   // format: OFF
   val source = LongPolling().longPollingSource("consul.nl.wehkamp.prod.blaze.ps", 8500,
                                                initialRequest(maxWait),
-                                               nextRequest(maxWait),
-                                               settings) // format: ON
+                                               settings)(nextRequest(maxWait)) // format: ON
 
-  source.runWith(Sink.ignore)
+  val logged = source.log("app", out ⇒ s"Received response: ${out.status}")
+
+  logged.runWith(Sink.ignore) // this is an experiment so we're only interested in the side effects, i.e. the log lines.
 }
 
 class LongPollingExt(system: ActorSystem) extends Extension {
@@ -47,12 +50,12 @@ class LongPollingExt(system: ActorSystem) extends Extension {
   // format: OFF
   def longPollingSource(host: String, port: Int,
                         initialRequest: HttpRequest,
-                        nextRequest: HttpResponse ⇒ HttpRequest,
                         connectionSettings: ClientConnectionSettings = ClientConnectionSettings(system))
+                       (nextRequest: HttpResponse ⇒ HttpRequest = _ => initialRequest)
                        (implicit m: Materializer): Source[HttpResponse, NotUsed] = { // format: ON
     Source.fromGraph(GraphDSL.create() { implicit b ⇒
       import GraphDSL.Implicits._
-      import s._
+      import s.dispatcher
 
       val initSource: Source[HttpRequest, NotUsed] =
         Source.single(initialRequest)
@@ -61,7 +64,6 @@ class LongPollingExt(system: ActorSystem) extends Extension {
         Flow[HttpRequest]
           .log("long-poller", out ⇒ s"Sending request: ${out.uri}")
           .via(singleConnectionCustomPool(host, port, connectionSettings))
-          .log("long-poller", out ⇒ s"""Received response: ${out.map(_.status.toString).getOrElse("ERROR")}""")
           .mapMaterializedValue(_ ⇒ NotUsed) // TODO: use the materialized value to allow shutdown
 
       val outboundResponsesFlow: Flow[Try[HttpResponse], HttpResponse, NotUsed] =
