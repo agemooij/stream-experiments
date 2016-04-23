@@ -16,6 +16,7 @@ object Build extends Build {
 
       libraryDependencies ++= Vector(
         Library.akkaHttp,
+        Library.akkaHttpSprayJson,
         Library.akkaSlf4j,
         Library.logback,
         Library.akkaHttpTestkit  % "test",
