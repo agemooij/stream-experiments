@@ -69,7 +69,7 @@ class LongPollingExt(system: ActorSystem) extends Extension {
       // format: ON
 
       SourceShape(outbound.out)
-    })
+    }).withAttributes(ActorAttributes.supervisionStrategy(Supervision.restartingDecider))
   }
 
   private def singleConnectionCustomPool(host: String, port: Int, //format: OFF
