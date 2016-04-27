@@ -16,43 +16,47 @@ import akka.stream.scaladsl._
 
 import spray.json._
 
+object ConsulEntities {
+  case class Service(name: String, tags: Set[String])
+  case class Services(services: Set[Service]) {
+    def withTag(tag: String) = Services(services.filter(_.tags.contains(tag)))
+  }
+
+  object Services extends DefaultJsonProtocol {
+    implicit val servicesFormat = lift(new RootJsonReader[Services]() {
+      def read(value: JsValue) = Services(
+        value.asJsObject.fields
+        .collect {
+          case (name, JsArray(tags)) ⇒ Service(name, tags.map(_.convertTo[String]).toSet)
+        }.toSet
+      )
+    })
+  }
+}
+
 object ConsulEndpoints {
+  import ConsulEntities._
   import RequestBuilding._
-  import DefaultJsonProtocol._
 
-  object catalog {
-    object services {
-      private val Endpoint = "/v1/catalog/services"
+  abstract class ConsulEndpoint[T](path: Uri.Path) {
+    def initialRequest(implicit maxWait: Duration): HttpRequest = Get(uri(path, maxWait, None))
+    def nextRequest(implicit maxWait: Duration): HttpResponse ⇒ HttpRequest = (response: HttpResponse) ⇒ {
+      Get(uri(path, maxWait, consulIndex(response)))
+    }
 
-      def initialRequest(maxWait: Duration) = Get(consulWatchUri(Endpoint, maxWait, None))
-      def nextRequest(maxWait: Duration) = (response: HttpResponse) ⇒ {
-        Get(consulWatchUri(Endpoint, maxWait, consulIndex(response)))
-      }
-
-      case class Service(name: String, tags: Set[String])
-      case class Services(services: Set[Service]) {
-        def withTag(tag: String) = Services(services.filter(_.tags.contains(tag)))
-      }
-
-      implicit val servicesFormat = lift(new RootJsonReader[Services]() {
-        def read(value: JsValue) = Services(
-          value.asJsObject.fields
-          .collect {
-            case (name, JsArray(tags)) ⇒ Service(name, tags.map(_.convertTo[String]).toSet)
-          }.toSet
-        )
-      })
+    private def uri(path: Uri.Path, maxWait: Duration, index: Option[Long]): Uri = {
+      Uri.from(
+        path = path.toString,
+        queryString = Some(s"wait=${maxWait.toSeconds}s&index=${index.map(_.toString).getOrElse("0")}")
+      )
     }
   }
 
-  def consulIndex(response: HttpResponse) = response.headers.find(_.is("x-consul-index")).map(_.value.toLong)
-
-  def consulWatchUri(endpoint: String, maxWait: Duration, index: Option[Long]): Uri = {
-    Uri.from(
-      path = endpoint,
-      queryString = Some(s"wait=${maxWait.toSeconds}s&index=${index.map(_.toString).getOrElse("0")}")
-    )
+  object catalog {
+    object AllServices extends ConsulEndpoint[Services](Uri.Path("/v1/catalog/services"))
   }
+
+  def consulIndex(response: HttpResponse) = response.headers.find(_.is("x-consul-index")).map(_.value.toLong)
 }
 
 object ConsulClientExperiments extends App {
@@ -60,10 +64,11 @@ object ConsulClientExperiments extends App {
   implicit val materializer = ActorMaterializer()
   implicit val dispatcher = system.dispatcher
 
+  import ConsulEntities._
   import ConsulEndpoints._
-  import catalog.services._
+  import catalog._
 
-  val maxWait = 5 seconds
+  implicit val maxWait = 5 seconds
   val settings = ClientConnectionSettings(system).withIdleTimeout(maxWait * 1.2)
 
   // Challenge: write a Consul watch
@@ -71,33 +76,49 @@ object ConsulClientExperiments extends App {
   //
   // The hostname below is a VPN-protected Consul server not reachable from the internet.
   // Please use your own Consul server if you want to run this code or use a different long polling API.
-  val poller = LongPolling()
-    .longPollingSource("consul.nl.wehkamp.prod.blaze.ps", 8500, initialRequest(maxWait), settings)(nextRequest(maxWait))
-    .log("app", response ⇒ s"""Response: ${response.status} ${consulIndex(response).getOrElse("")}""")
-    .via(ifChanged[HttpResponse](HttpResponse()) {
-      case (r1, r2) ⇒ consulIndex(r1).forall(i1 ⇒ consulIndex(r2).exists(i2 ⇒ i2 > i1))
-    })
-    .mapAsync(1)(Unmarshal(_).to[Services].map(_.withTag("exposed-by-gateway")))
+  // val poller = LongPolling()
+  //   .longPollingSource("consul.nl.wehkamp.prod.blaze.ps", 8500, AllServices.initialRequest, settings)(AllServices.nextRequest)
+  //   .log("app", response ⇒ s"""Response: ${response.status} ${consulIndex(response).getOrElse("")}""")
+  //   .via(ifChanged[HttpResponse](HttpResponse()) {
+  //     case (r1, r2) ⇒ consulIndex(r1).forall(i1 ⇒ consulIndex(r2).exists(i2 ⇒ i2 > i1))
+  //   })
+  //   .mapAsync(1)(Unmarshal(_).to[Services].map(_.withTag("exposed-by-gateway")))
+  //   .via(ifChanged[Services](Services(Set.empty[Service])) {
+  //     case (s1, s2) ⇒ s1 != s2
+  //   })
+  //   .log("app", response ⇒ s"Updated: ${response.services.map(_.name)}")
+  //   .runWith(Sink.ignore) // this is an experiment so we're only interested in the side effects, i.e. the log lines.
+
+  consulWatch[Services]("consul.nl.wehkamp.prod.blaze.ps", 8500, AllServices, settings)
     .via(ifChanged[Services](Services(Set.empty[Service])) {
       case (s1, s2) ⇒ s1 != s2
     })
+    .map(_.withTag("exposed-by-gateway"))
     .log("app", response ⇒ s"Updated: ${response.services.map(_.name)}")
     .runWith(Sink.ignore) // this is an experiment so we're only interested in the side effects, i.e. the log lines.
 
+
   // TODO:
-  //  - create a ConsulEndpoint type
   //  - create a trait for Consul entities that contains the consul index so
   //    we can fuse the two mapAsync stages and the two ifChanged stages.
 
   // format: OFF
-  // def consulWatch[T](host: String, port: Int,
-  //                    endpoint: ConsulEndpoint,
-  //                    connectionSettings: ClientConnectionSettings = ClientConnectionSettings(system))
-  //                   (implicit m: Materializer, u: Unmarshaller[HttpResponse, T]): Source[T, NotUsed] = { // format: ON
-  //   // ...
-  // }
-
   import akka._
+  def consulWatch[T](host: String, port: Int,
+                     endpoint: ConsulEndpoint[T],
+                     connectionSettings: ClientConnectionSettings = ClientConnectionSettings(system))
+                    (implicit materializer: Materializer,
+                              unmarshaller: Unmarshaller[HttpResponse, T],
+                              maxWait: Duration): Source[T, NotUsed] = { // format: ON
+    LongPolling()
+      .longPollingSource(host, port, endpoint.initialRequest, settings)(endpoint.nextRequest)
+      .log("app", response ⇒ s"""Response: ${response.status} ${consulIndex(response).getOrElse("")}""")
+      .via(ifChanged[HttpResponse](HttpResponse()) {
+        case (r1, r2) ⇒ consulIndex(r1).forall(i1 ⇒ consulIndex(r2).exists(i2 ⇒ i2 > i1))
+      })
+      .mapAsync(1)(Unmarshal(_).to[T])
+  }
+
   private def ifChanged[T](initialValue: T)(hasChanged: (T, T) ⇒ Boolean): Flow[T, T, NotUsed] = {
     Flow[T].prepend(Source.single(initialValue)).sliding(2).collect {
       case Seq(a, b) if hasChanged(a, b) ⇒ b
