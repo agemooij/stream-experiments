@@ -66,14 +66,41 @@ object ConsulClientExperiments extends App {
   val maxWait = 5 seconds
   val settings = ClientConnectionSettings(system).withIdleTimeout(maxWait * 1.2)
 
+  // Challenge: write a Consul watch
+  //
+  //
   // The hostname below is a VPN-protected Consul server not reachable from the internet.
   // Please use your own Consul server if you want to run this code or use a different long polling API.
-  val source = LongPolling()
+  val poller = LongPolling()
     .longPollingSource("consul.nl.wehkamp.prod.blaze.ps", 8500, initialRequest(maxWait), settings)(nextRequest(maxWait))
-    .log("app", response ⇒ s"Response: ${response.status} ${consulIndex(response)}")
-    // .scan() // only allow responses with an index != previous index
+    .log("app", response ⇒ s"""Response: ${response.status} ${consulIndex(response).getOrElse("")}""")
+    .via(ifChanged[HttpResponse](HttpResponse()) {
+      case (r1, r2) ⇒ consulIndex(r1).forall(i1 ⇒ consulIndex(r2).exists(i2 ⇒ i2 > i1))
+    })
     .mapAsync(1)(Unmarshal(_).to[Services].map(_.withTag("exposed-by-gateway")))
-    // .scan() // filter out unchanged values
+    .via(ifChanged[Services](Services(Set.empty[Service])) {
+      case (s1, s2) ⇒ s1 != s2
+    })
     .log("app", response ⇒ s"Updated: ${response.services.map(_.name)}")
     .runWith(Sink.ignore) // this is an experiment so we're only interested in the side effects, i.e. the log lines.
+
+  // TODO:
+  //  - create a ConsulEndpoint type
+  //  - create a trait for Consul entities that contains the consul index so
+  //    we can fuse the two mapAsync stages and the two ifChanged stages.
+
+  // format: OFF
+  // def consulWatch[T](host: String, port: Int,
+  //                    endpoint: ConsulEndpoint,
+  //                    connectionSettings: ClientConnectionSettings = ClientConnectionSettings(system))
+  //                   (implicit m: Materializer, u: Unmarshaller[HttpResponse, T]): Source[T, NotUsed] = { // format: ON
+  //   // ...
+  // }
+
+  import akka._
+  private def ifChanged[T](initialValue: T)(hasChanged: (T, T) ⇒ Boolean): Flow[T, T, NotUsed] = {
+    Flow[T].prepend(Source.single(initialValue)).sliding(2).collect {
+      case Seq(a, b) if hasChanged(a, b) ⇒ b
+    }
+  }
 }
