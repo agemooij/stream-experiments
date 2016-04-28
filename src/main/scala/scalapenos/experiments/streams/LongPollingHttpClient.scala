@@ -1,6 +1,5 @@
 package scalapenos.experiments.streams
 
-import scala.concurrent.duration._
 import scala.util._
 
 import akka._
@@ -32,7 +31,6 @@ class LongPollingExt(system: ActorSystem) extends Extension {
                        (implicit m: Materializer): Source[HttpResponse, NotUsed] = { // format: ON
     Source.fromGraph(GraphDSL.create() { implicit b ⇒
       import GraphDSL.Implicits._
-      import s.dispatcher
 
       val initSource: Source[HttpRequest, NotUsed] =
         Source.single(initialRequest)
@@ -44,10 +42,8 @@ class LongPollingExt(system: ActorSystem) extends Extension {
           .mapMaterializedValue(_ ⇒ NotUsed) // TODO: use the materialized value to allow shutdown
 
       val outboundResponsesFlow: Flow[Try[HttpResponse], HttpResponse, NotUsed] =
-        Flow[Try[HttpResponse]] // TODO: add size limit
+        Flow[Try[HttpResponse]]
           .collect { case Success(response) ⇒ response }
-          .mapAsync(1)(response ⇒ response.entity.toStrict(5.seconds).map(strictEntity ⇒ response.copy(entity = strictEntity)))
-          .withAttributes(ActorAttributes.supervisionStrategy(Supervision.resumingDecider)) // TODO: turn into log-and-resume
 
       val feedbackResponsesFlow: Flow[Try[HttpResponse], HttpRequest, NotUsed] =
         Flow[Try[HttpResponse]]

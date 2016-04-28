@@ -1,6 +1,5 @@
 package scalapenos.experiments.streams
 
-import scala.concurrent._
 import scala.concurrent.duration._
 
 import akka.actor._
@@ -41,6 +40,7 @@ object ConsulEntities {
       )
     })
 
+    // import scala.concurrent._
     // implicit def um(implicit ec: ExecutionContext, materializer: Materializer): Unmarshaller[HttpResponse, Services] = {
     //   new Unmarshaller[HttpResponse, Services] {
     //     val toJson: FromEntityUnmarshaller[JsValue] = sprayJsValueUnmarshaller
@@ -99,33 +99,18 @@ object ConsulClientExperiments extends App {
   implicit val maxWait = 5 seconds
   val settings = ClientConnectionSettings(system).withIdleTimeout(maxWait * 1.2)
 
-  // Challenge: write a Consul watch
-  //
-  //
   // The hostname below is a VPN-protected Consul server not reachable from the internet.
-  // Please use your own Consul server if you want to run this code or use a different long polling API.
-  // val poller = LongPolling()
-  //   .longPollingSource("consul.nl.wehkamp.prod.blaze.ps", 8500, AllServices.initialRequest, settings)(AllServices.nextRequest)
-  //   .log("app", response ⇒ s"""Response: ${response.status} ${consulIndex(response).getOrElse("")}""")
-  //   .via(ifChanged[HttpResponse](HttpResponse()) {
-  //     case (r1, r2) ⇒ consulIndex(r1).forall(i1 ⇒ consulIndex(r2).exists(i2 ⇒ i2 > i1))
-  //   })
-  //   .mapAsync(1)(Unmarshal(_).to[Services].map(_.withTag("exposed-by-gateway")))
-  //   .via(ifChanged[Services](Services(Set.empty[Service])) {
-  //     case (s1, s2) ⇒ s1 != s2
-  //   })
-  //   .log("app", response ⇒ s"Updated: ${response.services.map(_.name)}")
-  //   .runWith(Sink.ignore) // this is an experiment so we're only interested in the side effects, i.e. the log lines.
-
+  // Please use your own Consul server if you want to run this code!
   consulWatch[Services]("consul.nl.wehkamp.prod.blaze.ps", 8500, AllServices, settings)
-    .map(_.withTag("exposed-by-gateway"))
+    .map(_.withTag("exposed-by-gateway")) // Please use your own tag or remove this line
     .log("app", response ⇒ s"Updated: ${response.services.map(_.name)}")
     .runWith(Sink.ignore) // this is an experiment so we're only interested in the side effects, i.e. the log lines.
 
 
   // TODO:
-  //  - create a trait for Consul entities that contains the consul index so
-  //    we can fuse the two mapAsync stages and the two ifChanged stages.
+  //  - unmarshal to something that retains the consul index so we can
+  //    do only one ifChanged operation and one mapAsync instead of needing
+  //    the initial entity draining stage
 
   // format: OFF
   import akka._
@@ -137,11 +122,16 @@ object ConsulClientExperiments extends App {
                               maxWait: Duration): Source[T, NotUsed] = { // format: ON
     LongPolling()
       .longPollingSource(host, port, endpoint.initialRequest, settings)(endpoint.nextRequest)
+      // needed to prevent blocking the stream if we never read the entity
+      .mapAsync(1)(response ⇒ response.entity.toStrict(5.seconds).map(strictEntity ⇒ response.copy(entity = strictEntity)))
+      .withAttributes(ActorAttributes.supervisionStrategy(Supervision.resumingDecider)) // TODO: turn into log-and-resume
+      // log the response so we know something is happening
       .log("app", response ⇒ s"""Response: ${response.status} ${consulIndex(response).getOrElse("")}""")
-      .via(ifChanged {
-        (r1, r2) ⇒ consulIndex(r1).forall(i1 ⇒ consulIndex(r2).exists(i2 ⇒ i2 > i1))
-      })
+      // we are only interested in responses with an index header value greater than the previous one
+      .via(ifChanged((r1, r2) ⇒ consulIndex(r1).forall(i1 ⇒ consulIndex(r2).exists(i2 ⇒ i2 > i1))))
+      // unmarshal to our target type
       .mapAsync(1)(Unmarshal(_).to[T])
+      // we are only interested in content changes
       .via(ifChanged())
   }
 
