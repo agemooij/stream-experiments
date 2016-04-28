@@ -1,5 +1,6 @@
 package scalapenos.experiments.streams
 
+import scala.concurrent._
 import scala.concurrent.duration._
 
 import akka.actor._
@@ -17,7 +18,15 @@ import akka.stream.scaladsl._
 import spray.json._
 
 object ConsulEntities {
+  // trait ConsulEntity {
+  //   def index: Long
+  // }
+
   case class Service(name: String, tags: Set[String])
+  // case class Services(index: Long, services: Set[Service]) extends ConsulEntity {
+  //   def withTag(tag: String) = Services(index, services.filter(_.tags.contains(tag)))
+  // }
+
   case class Services(services: Set[Service]) {
     def withTag(tag: String) = Services(services.filter(_.tags.contains(tag)))
   }
@@ -31,6 +40,25 @@ object ConsulEntities {
         }.toSet
       )
     })
+
+    // implicit def um(implicit ec: ExecutionContext, materializer: Materializer): Unmarshaller[HttpResponse, Services] = {
+    //   new Unmarshaller[HttpResponse, Services] {
+    //     val toJson: FromEntityUnmarshaller[JsValue] = sprayJsValueUnmarshaller
+
+    //     def apply(response: HttpResponse)(implicit ec: ExecutionContext, materializer: Materializer) = {
+    //       val index: Long = response.headers.find(_.is("x-consul-index")).map(_.value.toLong).getOrElse(0)
+
+    //       toJson(response.entity)
+    //         .map(value ⇒ Services(
+    //           index,
+    //           value.asJsObject.fields
+    //           .collect {
+    //             case (name, JsArray(tags)) ⇒ Service(name, tags.map(_.convertTo[String]).toSet)
+    //           }.toSet
+    //         ))
+    //     }
+    //   }
+    // }
   }
 }
 
@@ -90,9 +118,6 @@ object ConsulClientExperiments extends App {
   //   .runWith(Sink.ignore) // this is an experiment so we're only interested in the side effects, i.e. the log lines.
 
   consulWatch[Services]("consul.nl.wehkamp.prod.blaze.ps", 8500, AllServices, settings)
-    .via(ifChanged[Services](Services(Set.empty[Service])) {
-      case (s1, s2) ⇒ s1 != s2
-    })
     .map(_.withTag("exposed-by-gateway"))
     .log("app", response ⇒ s"Updated: ${response.services.map(_.name)}")
     .runWith(Sink.ignore) // this is an experiment so we're only interested in the side effects, i.e. the log lines.
@@ -108,20 +133,26 @@ object ConsulClientExperiments extends App {
                      endpoint: ConsulEndpoint[T],
                      connectionSettings: ClientConnectionSettings = ClientConnectionSettings(system))
                     (implicit materializer: Materializer,
-                              unmarshaller: Unmarshaller[HttpResponse, T],
+                              unmarshaller: FromResponseUnmarshaller[T],
                               maxWait: Duration): Source[T, NotUsed] = { // format: ON
     LongPolling()
       .longPollingSource(host, port, endpoint.initialRequest, settings)(endpoint.nextRequest)
       .log("app", response ⇒ s"""Response: ${response.status} ${consulIndex(response).getOrElse("")}""")
-      .via(ifChanged[HttpResponse](HttpResponse()) {
-        case (r1, r2) ⇒ consulIndex(r1).forall(i1 ⇒ consulIndex(r2).exists(i2 ⇒ i2 > i1))
+      .via(ifChanged {
+        (r1, r2) ⇒ consulIndex(r1).forall(i1 ⇒ consulIndex(r2).exists(i2 ⇒ i2 > i1))
       })
       .mapAsync(1)(Unmarshal(_).to[T])
+      .via(ifChanged())
   }
 
-  private def ifChanged[T](initialValue: T)(hasChanged: (T, T) ⇒ Boolean): Flow[T, T, NotUsed] = {
-    Flow[T].prepend(Source.single(initialValue)).sliding(2).collect {
-      case Seq(a, b) if hasChanged(a, b) ⇒ b
-    }
+  private def ifChanged[T](hasChanged: (T, T) ⇒ Boolean = (a: T, b: T) ⇒ a != b): Flow[T, T, NotUsed] = {
+    Flow[T]
+      .map(Option(_))
+      .prepend(Source.single(Option.empty[T]))
+      .sliding(2)
+      .collect {
+        case Seq(None, Some(b))                        ⇒ b
+        case Seq(Some(a), Some(b)) if hasChanged(a, b) ⇒ b
+      }
   }
 }
