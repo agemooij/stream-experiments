@@ -8,6 +8,6 @@ This repository contains some personal experiments with the akka-http client API
 
 - a very basic load balancing http client
 - a very basic long polling http client
-    - a [Consul](https://www.consul.io/) API watcher using long polling
+    - a [Consul](https://www.consul.io/) API watcher using long polling, unmarshalling, and stream change detection.
 
 Feel free to use this code any way you want. This includes using it as an example of what not to do :smile:

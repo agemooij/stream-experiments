@@ -39,26 +39,6 @@ object ConsulEntities {
         }.toSet
       )
     })
-
-    // import scala.concurrent._
-    // implicit def um(implicit ec: ExecutionContext, materializer: Materializer): Unmarshaller[HttpResponse, Services] = {
-    //   new Unmarshaller[HttpResponse, Services] {
-    //     val toJson: FromEntityUnmarshaller[JsValue] = sprayJsValueUnmarshaller
-
-    //     def apply(response: HttpResponse)(implicit ec: ExecutionContext, materializer: Materializer) = {
-    //       val index: Long = response.headers.find(_.is("x-consul-index")).map(_.value.toLong).getOrElse(0)
-
-    //       toJson(response.entity)
-    //         .map(value ⇒ Services(
-    //           index,
-    //           value.asJsObject.fields
-    //           .collect {
-    //             case (name, JsArray(tags)) ⇒ Service(name, tags.map(_.convertTo[String]).toSet)
-    //           }.toSet
-    //         ))
-    //     }
-    //   }
-    // }
   }
 }
 
