@@ -17,15 +17,7 @@ import akka.stream.scaladsl._
 import spray.json._
 
 object ConsulEntities {
-  // trait ConsulEntity {
-  //   def index: Long
-  // }
-
   case class Service(name: String, tags: Set[String])
-  // case class Services(index: Long, services: Set[Service]) extends ConsulEntity {
-  //   def withTag(tag: String) = Services(index, services.filter(_.tags.contains(tag)))
-  // }
-
   case class Services(services: Set[Service]) {
     def withTag(tag: String) = Services(services.filter(_.tags.contains(tag)))
   }
