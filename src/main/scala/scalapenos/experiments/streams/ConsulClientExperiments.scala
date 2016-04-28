@@ -106,12 +106,6 @@ object ConsulClientExperiments extends App {
     .log("app", response ⇒ s"Updated: ${response.services.map(_.name)}")
     .runWith(Sink.ignore) // this is an experiment so we're only interested in the side effects, i.e. the log lines.
 
-
-  // TODO:
-  //  - unmarshal to something that retains the consul index so we can
-  //    do only one ifChanged operation and one mapAsync instead of needing
-  //    the initial entity draining stage
-
   // format: OFF
   import akka._
   def consulWatch[T](host: String, port: Int,
@@ -122,20 +116,23 @@ object ConsulClientExperiments extends App {
                               maxWait: Duration): Source[T, NotUsed] = { // format: ON
     LongPolling()
       .longPollingSource(host, port, endpoint.initialRequest, settings)(endpoint.nextRequest)
-      // needed to prevent blocking the stream if we never read the entity
-      .mapAsync(1)(response ⇒ response.entity.toStrict(5.seconds).map(strictEntity ⇒ response.copy(entity = strictEntity)))
-      .withAttributes(ActorAttributes.supervisionStrategy(Supervision.resumingDecider)) // TODO: turn into log-and-resume
       // log the response so we know something is happening
       .log("app", response ⇒ s"""Response: ${response.status} ${consulIndex(response).getOrElse("")}""")
+      // unmarshal to our target type but retain the consul index
+      .mapAsync(1)(response ⇒
+        Unmarshal(response).to[T].map(t ⇒ ConsulEntity(consulIndex(response).getOrElse(0L), t))
+      )
       // we are only interested in responses with an index header value greater than the previous one
-      .via(ifChanged((r1, r2) ⇒ consulIndex(r1).forall(i1 ⇒ consulIndex(r2).exists(i2 ⇒ i2 > i1))))
-      // unmarshal to our target type
-      .mapAsync(1)(Unmarshal(_).to[T])
-      // we are only interested in content changes
-      .via(ifChanged())
+      // and an unmarshalled entity that has changed
+      .via(ifChanged((e1, e2) ⇒
+        e1.index > e2.index && e1.value != e2.value
+      ))
+      .map(_.value)
   }
 
-  private def ifChanged[T](hasChanged: (T, T) ⇒ Boolean = (a: T, b: T) ⇒ a != b): Flow[T, T, NotUsed] = {
+  case class ConsulEntity[T](index: Long, value: T)
+
+  def ifChanged[T](hasChanged: (T, T) ⇒ Boolean = (a: T, b: T) ⇒ a != b): Flow[T, T, NotUsed] = {
     Flow[T]
       .map(Option(_))
       .prepend(Source.single(Option.empty[T]))
