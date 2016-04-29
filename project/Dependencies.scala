@@ -14,5 +14,6 @@ object Library {
   val akkaTestkit        = "com.typesafe.akka"  %%  "akka-testkit"                       %  Version.Akka
   val scalaTest          = "org.scalatest"      %%  "scalatest"                          %  Version.ScalaTest
 
+  val base64             = "me.lessis"          %%  "base64"                             % "0.2.0"
   val logback            = "ch.qos.logback"      %  "logback-classic"                    % "1.1.7"
 }

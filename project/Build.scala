@@ -19,6 +19,7 @@ object Build extends Build {
         Library.akkaHttpSprayJson,
         Library.akkaSlf4j,
         Library.logback,
+        Library.base64,
         Library.akkaHttpTestkit  % "test",
         Library.akkaTestkit      % "test",
         Library.scalaTest        % "test"
