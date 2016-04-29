@@ -183,8 +183,14 @@ object ConsulClientExperiments extends App {
   //   .log("app", nodes ⇒ s"Updated: ${nodes}")
   //   .runWith(Sink.ignore) // this is an experiment so we're only interested in the side effects, i.e. the log lines.
 
-  consulWatch[List[KV]](host, port, KVs("services/blaze-canary-service"), settings)
-    .log("app", kvs ⇒ s"Updated: ${kvs}")
-    .runWith(Sink.ignore) // this is an experiment so we're only interested in the side effects, i.e. the log lines.
+  // consulWatch[List[KV]](host, port, KVs("services/blaze-canary-service"), settings)
+  //   .log("app", kvs ⇒ s"Updated: ${kvs}")
+  //   .runWith(Sink.ignore) // this is an experiment so we're only interested in the side effects, i.e. the log lines.
 
+  case class ServiceInfo(nodes: Set[Node], kvs: Set[KV])
+
+  consulWatch(host, port, ServiceNodes("blaze-canary-service"), settings)
+    .zipWith(consulWatch(host, port, KVs("services/blaze-canary-service"), settings))((nodes, kvs) ⇒ ServiceInfo(nodes.toSet, kvs.toSet))
+    .log("app", nodes ⇒ s"Updated: ${nodes}")
+    .runWith(Sink.ignore) // this is an experiment so we're only interested in the side effects, i.e. the log lines.
 }
