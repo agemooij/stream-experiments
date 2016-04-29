@@ -25,7 +25,7 @@ object ConsulEntities {
   }
 
   object Services extends DefaultJsonProtocol {
-    implicit val servicesFormat = lift(new RootJsonReader[Services]() {
+    implicit val reader = lift(new RootJsonReader[Services]() {
       def read(value: JsValue) = Services(
         value.asJsObject.fields
         .collect {
@@ -42,7 +42,7 @@ object ConsulEntities {
     override val toString = s"${host}:${port}"
   }
   object Node extends DefaultJsonProtocol {
-    implicit val serverFormat = lift(new JsonReader[Node]() {
+    implicit val reader = lift(new RootJsonReader[Node]() {
       def read(json: JsValue): Node = {
         json.asJsObject.getFields("Service") match {
           case Seq(service: JsObject) ⇒
@@ -54,8 +54,19 @@ object ConsulEntities {
         }
       }
     })
+  }
 
-    implicit val nodeOrdering = Ordering.by[Node, String](_.toString)
+  case class KV(key: String, value: Option[String])
+  object KV extends DefaultJsonProtocol {
+    implicit val reader = lift(new RootJsonReader[KV]() {
+      def read(json: JsValue): KV = {
+        json.asJsObject.getFields("Key", "Value") match {
+          case Seq(JsString(key), JsString(value)) ⇒ KV(key, base64.Decode(value).right.toOption.map(new String(_, java.nio.charset.StandardCharsets.UTF_8)))
+          case Seq(JsString(key), JsNull)          ⇒ KV(key, None)
+          case other                               ⇒ deserializationError("Invalid json node: " + other)
+        }
+      }
+    })
   }
 }
 
@@ -84,6 +95,7 @@ object ConsulEndpoints {
 
   object AllServices extends ConsulEndpoint[Services](Uri("/v1/catalog/services"))
   case class ServiceNodes(name: String) extends ConsulEndpoint[List[Node]](Uri(s"/v1/health/service/${name}?passing"))
+  case class KVs(path: String) extends ConsulEndpoint[List[KV]](Uri(s"/v1/kv/$path/?recurse"))
 }
 
 object StreamUtils {
@@ -118,10 +130,15 @@ object ConsulClient {
     LongPolling()
       .longPollingSource(host, port, endpoint.initialRequest, connectionSettings)(endpoint.nextRequest)
       // log the response so we know something is happening
-      .log("app", response ⇒ s"""Response: ${response.status} ${consulIndex(response).getOrElse("")}""")
+      .log("consul", response ⇒ s"""Response: ${response.status} ${consulIndex(response).getOrElse("")}""")
       // unmarshal to our target type but retain the consul index
       .mapAsync(1)(response ⇒
-        Unmarshal(response).to[T].map(t ⇒ ConsulEntity(consulIndex(response).getOrElse(0L), t))
+        Unmarshal(response)
+          .to[T]
+          .map(t ⇒ ConsulEntity(consulIndex(response).getOrElse(0L), t))
+          .recover {
+            case e: Exception ⇒ e.printStackTrace; throw e
+          }
       )
       // Recover from unmarshalling errors.
       // TODO: log errors!
@@ -162,8 +179,12 @@ object ConsulClientExperiments extends App {
   //   .log("app", response ⇒ s"Updated: ${response.services.map(_.name)}")
   //   .runWith(Sink.ignore) // this is an experiment so we're only interested in the side effects, i.e. the log lines.
 
-  consulWatch[List[Node]](host, port, ServiceNodes("blaze-canary-service"), settings)
-    .log("app", nodes ⇒ s"Updated: ${nodes}")
+  // consulWatch[List[Node]](host, port, ServiceNodes("blaze-canary-service"), settings)
+  //   .log("app", nodes ⇒ s"Updated: ${nodes}")
+  //   .runWith(Sink.ignore) // this is an experiment so we're only interested in the side effects, i.e. the log lines.
+
+  consulWatch[List[KV]](host, port, KVs("services/blaze-canary-service"), settings)
+    .log("app", kvs ⇒ s"Updated: ${kvs}")
     .runWith(Sink.ignore) // this is an experiment so we're only interested in the side effects, i.e. the log lines.
 
 }
