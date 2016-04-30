@@ -86,9 +86,8 @@ object ConsulEndpoints {
     }
 
     private def uri(maxWait: Duration, index: Option[Long]): Uri = {
-      import Uri._
       baseUri.withQuery(
-        Query.Cons("index", index.map(_.toString).getOrElse("0"), Query.Cons("wait", s"${maxWait.toSeconds}s", baseUri.query()))
+        "index" → index.map(_.toString).getOrElse("0") +: "wait" → s"${maxWait.toSeconds}s" +: baseUri.query()
       )
     }
   }
