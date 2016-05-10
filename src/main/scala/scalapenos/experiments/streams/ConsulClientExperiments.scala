@@ -2,6 +2,7 @@ package scalapenos.experiments.streams
 
 import scala.concurrent._
 import scala.concurrent.duration._
+import scala.util.control._
 
 import akka._
 import akka.actor._
@@ -79,22 +80,31 @@ object ConsulEndpoints {
   import ConsulUtils._
   import RequestBuilding._
 
-  abstract class ConsulEndpoint[T](val baseUri: Uri) {
-    def initialRequest(implicit maxWait: Duration): HttpRequest = Get(uri(maxWait, None))
-    def nextRequest(implicit maxWait: Duration): HttpResponse ⇒ HttpRequest = (response: HttpResponse) ⇒ {
-      Get(uri(maxWait, consulIndex(response)))
-    }
+  object Catalog {
+    object AllServices extends ConsulEndpoint[Services](Uri("/v1/catalog/services"))
+  }
 
-    private def uri(maxWait: Duration, index: Option[Long]): Uri = {
-      baseUri.withQuery(
-        "index" → index.map(_.toString).getOrElse("0") +: "wait" → s"${maxWait.toSeconds}s" +: baseUri.query()
-      )
+  object Health {
+    case class Service(name: String) extends ConsulEndpoint[List[Node]](Uri(s"/v1/health/service/${name}?passing"))
+  }
+
+  object KeyValues {
+    case class ForPath(path: String, recursive: Boolean = true)
+      extends ConsulEndpoint[List[KV]](Uri(s"""/v1/kv/${path}${if (recursive) "/&recursive" else ""}"""))
+  }
+
+  abstract class ConsulEndpoint[T](val baseUri: Uri) {
+    def initialRequest(implicit maxWait: Duration): HttpRequest = Get(watchUri(baseUri, maxWait, None))
+    def nextRequest(implicit maxWait: Duration): HttpResponse ⇒ HttpRequest = (response: HttpResponse) ⇒ {
+      Get(watchUri(baseUri, maxWait, consulIndex(response)))
     }
   }
 
-  object AllServices extends ConsulEndpoint[Services](Uri("/v1/catalog/services"))
-  case class ServiceNodes(name: String) extends ConsulEndpoint[List[Node]](Uri(s"/v1/health/service/${name}?passing"))
-  case class KVs(path: String) extends ConsulEndpoint[List[KV]](Uri(s"/v1/kv/$path/?recurse"))
+  private def watchUri(baseUri: Uri, maxWait: Duration, index: Option[Long]): Uri = {
+    baseUri.withQuery(
+      "index" → index.map(_.toString).getOrElse("0") +: "wait" → s"${maxWait.toSeconds}s" +: baseUri.query()
+    )
+  }
 }
 
 object StreamUtils {
@@ -136,7 +146,7 @@ object ConsulClient {
           .to[T]
           .map(t ⇒ ConsulEntity(consulIndex(response).getOrElse(0L), t))
           .recover {
-            case e: Exception ⇒ e.printStackTrace; throw e
+            case NonFatal(e) ⇒ e.printStackTrace; throw e
           }
       )
       // Recover from unmarshalling errors.
@@ -188,8 +198,10 @@ object ConsulClientExperiments extends App {
 
   case class ServiceInfo(nodes: Set[Node], kvs: Set[KV])
 
-  consulWatch(host, port, ServiceNodes("blaze-canary-service"), settings)
-    .zipWith(consulWatch(host, port, KVs("services/blaze-canary-service"), settings))((nodes, kvs) ⇒ ServiceInfo(nodes.toSet, kvs.toSet))
+  val health = consulWatch(host, port, Health.Service("blaze-canary-service"), settings)
+  val keyvalues = consulWatch(host, port, KeyValues.ForPath("services/blaze-canary-service"), settings)
+
+  health.zipWith(keyvalues)((nodes, kvs) ⇒ ServiceInfo(nodes.toSet, kvs.toSet))
     .log("app", nodes ⇒ s"Updated: ${nodes}")
     .runWith(Sink.ignore) // this is an experiment so we're only interested in the side effects, i.e. the log lines.
 }
